@@ -6,7 +6,7 @@ import json
 # Authenticate to Firestore with the JSON account key.
 key_dict = json.loads(st.secrets["textkey"])
 creds = service_account.Credentials.from_service_account_info(key_dict)
-db = firestore.Client(credentials=creds, project="ga4cdp")
+db = firestore.Client(credentials=creds, project="gtm-5v5drk2p-mzg3y")
 
 #  tady to zkusim vložit
 # Streamlit widgets to let a user create a new post
