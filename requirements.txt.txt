@@ -1,2 +1,8 @@
 streamlit
 google-cloud-firestore
+google.cloud
+google.cloud.bigquery
+google.cloud.core
+google.auth
+google.resumable.media
+google.api.core
