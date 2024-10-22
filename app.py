@@ -12,6 +12,8 @@ db = firestore.Client(credentials=creds, project="gtm-5v5drk2p-mzg3y")
 
 #  tady to zkusim vložit
 # Streamlit widgets to let a user create a new post
+st.title("Composable CDP built with Google Cloud and Streamlit")
+st.subheader("This site is POC user interface of CDP. When you sumbit your (fake) email on https://jiriklimecky.tech/, you can check here that the email is stored together with GA4 Client ID")
 user_email = st.text_input("User e-mail:")
 search = st.button("Search")
 
