@@ -1,0 +1,111 @@
+//for orchestratiion of 1) creation JSON file with data from BQ table 2) Sending Pub/Sub message 3) Cloud function (triggered by Pub/Sub) which takes JSON file a export it to Firestore. 
+//heavily inspired by https://stacktonic.com/article/how-to-export-big-query-data-to-google-firestore-and-gtm-server
+- init:
+
+    assign:
+
+    - project_id: "project_id"
+
+    - bq_project_id: "project_id"
+
+    - bq_dataset_export: "analytics_XX"
+
+    - bq_table_export: "firestore_export_user_data"
+
+    - bq_query: SELECT * FROM `project_id.analytics_XX.firestore_export_user_data`
+
+    - gcs_bucket: "bucket_bq_to_fi_data_to_value"
+
+    - gcs_filepath: "firestore-export/firestore-export.json"
+
+    - pubsub_topic: "BQ_to_firestore"
+
+    - pubsub_message: {
+
+           "projectId": "project_id",
+
+           "bucketName": "bucket_bq_to_fi_data_to_value",
+
+           "bucketPath": "firestore-export/firestore-export.json",
+
+           "firestoreCollection": "hephaestus_test",
+
+           "firestoreKey": "email"
+
+       }
+
+- bigquery-create-export-table:
+
+               call: googleapis.bigquery.v2.jobs.insert
+
+               args:
+
+                   projectId: ${project_id}
+
+                   body:
+
+                       configuration:
+
+                           query:
+
+                               query: ${bq_query}
+
+                               destinationTable:
+
+                                   projectId: ${bq_project_id}
+
+                                   datasetId: ${bq_dataset_export}
+
+                                   tableId: ${bq_table_export}
+
+                               create_disposition: "CREATE_IF_NEEDED"
+
+                               write_disposition: "WRITE_TRUNCATE"
+
+                               allowLargeResults: true
+
+                               useLegacySql: false
+
+- bigquery-table-to-gcs:
+
+   call: googleapis.bigquery.v2.jobs.insert
+
+   args:
+
+       projectId: ${project_id}
+
+       body:
+
+           configuration:
+
+               extract:
+
+                   compression: NONE
+
+                   destinationFormat: "NEWLINE_DELIMITED_JSON"
+
+                   destinationUris: ['${"gs://" + gcs_bucket + "/" + gcs_filepath}']
+
+                   sourceTable:
+
+                       projectId: ${bq_project_id}
+
+                       datasetId: ${bq_dataset_export}
+
+                       tableId: ${bq_table_export}
+
+                      
+
+- publish_message_to_pubsub:
+
+   call: googleapis.pubsub.v1.projects.topics.publish
+
+   args:
+
+     topic: ${"projects/" + project_id + "/topics/" + pubsub_topic}
+
+     body:
+
+       messages:
+
+         - data: ${base64.encode(json.encode(pubsub_message))}
