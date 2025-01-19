@@ -1,3 +1,13 @@
+/*
+Cloud function which takes JSON from Cloud Storage Bucket and imports it to Firestore based on key. 
+
+Heavily inspired by: https://stacktonic.com/article/how-to-export-big-query-data-to-google-firestore-and-gtm-server
+
+Made changes: 
+- keeping "." in data written to firestore
+-  change of method for writing to Firestore to not replace whole document if there are already any other data
+*/
+
 'use strict';
 
 const admin = require('firebase-admin');
