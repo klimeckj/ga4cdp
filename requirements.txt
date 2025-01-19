@@ -6,3 +6,4 @@ google.cloud.core
 google.auth
 google.resumable.media
 google.api.core
+streamlit-mermaid
