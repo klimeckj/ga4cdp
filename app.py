@@ -4,6 +4,7 @@ from google.cloud import firestore
 from google.cloud.firestore import Client
 from google.oauth2 import service_account
 import json
+from streamlit_mermaid import st_mermaid
 
 # Authenticate to Firestore with the JSON account key.
 key_dict = json.loads(st.secrets["textkey"])
@@ -34,3 +35,86 @@ if user_email and search:
 #st.write("searched e-mail: ", doc.id)
 #st.write("known informations: ", doc.to_dict())
 
+def display_sequence_diagram():
+    sequence_chart = """
+    sequenceDiagram
+        actor User
+        participant WebsiteAndGTM
+        participant ServerGTM
+        participant GA4
+        participant BigQuery
+        participant Firestore
+        participant Streamlit
+
+        User->>WebsiteAndGTM: Visits website
+        WebsiteAndGTM->>ServerGTM: Send pageview/events
+        WebsiteAndGTM->>ServerGTM: Send user email
+        ServerGTM->>Firestore: Send emails and client_ids
+        ServerGTM->>BigQuery: Send emails and client_ids
+        ServerGTM->>GA4: Send behavioral data
+        GA4->>BigQuery: Export user behavioral data 
+        BigQuery->>Firestore: Send transformed behavioral data       
+        Streamlit->>Firestore: Query user data
+        Streamlit->>Streamlit: Create visualization
+        User->>Streamlit: View unified user profile
+    """
+    st_mermaid(sequence_chart)
+
+def display_component_diagram():
+    component_chart = """
+    graph TD
+        %% Title at the top
+        title[Customer Data Platform PoC]
+        style title fill:none,stroke:none
+        
+        %% Web Layer
+        subgraph Web Layer
+            website["WebsiteAndGTM<br/>Collects user interactions"]
+        end
+        
+        %% Processing Layer
+        subgraph Processing Layer
+            gtm["Server GTM<br/>Captures user email and GA4 client_id"]
+            ga4["GA4<br/>(Analytics)<br/>Tracks user behavior"]
+            firestore[(Firestore<br/>NoSQL DB<br/>Stores user identities)]
+            bigquery[(BigQuery<br/>Data Warehouse<br/>Stores behavioral data)]
+        end
+        
+        %% Visualization Layer
+        subgraph Visualization Layer
+            streamlit["Streamlit App<br/>(Python)<br/>Visualizes unified data"]
+        end
+        
+        %% Relationships with specific labels
+        website -->|"Sends events/user email"| gtm
+        gtm -->|"Emails and client_ids"| firestore
+        gtm -->|"Behavioral data"| ga4
+        gtm -->|"Emails and client_ids"| bigquery
+        ga4 -->|"Daily export"| bigquery
+        firestore -->|"User data"| streamlit
+        bigquery -->|"Transformed data"| firestore
+        
+        %% Styling
+        style Web Layer fill:#f5f5f5,stroke:#333,stroke-width:2px
+        style Processing Layer fill:#e6f3ff,stroke:#333,stroke-width:2px
+        style Visualization Layer fill:#f5fff5,stroke:#333,stroke-width:2px
+        
+        %% Component styling
+        style website fill:#fff,stroke:#333,stroke-width:2px
+        style ga4 fill:#fff,stroke:#333,stroke-width:2px
+        style gtm fill:#fff,stroke:#333,stroke-width:2px
+        style firestore fill:#fff,stroke:#333,stroke-width:2px
+        style bigquery fill:#fff,stroke:#333,stroke-width:2px
+        style streamlit fill:#fff,stroke:#333,stroke-width:2px
+    """
+    st_mermaid(component_chart)
+
+def main():
+    st.title("Application Architecture")
+    st.subheader("Component Diagram")
+    display_component_diagram()
+    st.subheader("Sequence Diagram")
+    display_sequence_diagram()
+
+if __name__ == "__main__":
+    main()
