@@ -11,7 +11,6 @@ key_dict = json.loads(st.secrets["textkey"])
 creds = service_account.Credentials.from_service_account_info(key_dict)
 db = firestore.Client(credentials=creds, project="gtm-5v5drk2p-mzg3y")
 
-#  tady to zkusim vložit
 # Streamlit widgets to let a user create a new post
 header = st.title("Composable CDP")
 sub_text = st.text("This site is POC user interface of CDP. How to use it?")
