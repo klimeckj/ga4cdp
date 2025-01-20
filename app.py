@@ -17,7 +17,7 @@ header = st.title("Composable CDP")
 sub_text = st.text("This site is POC user interface of CDP. How to use it?")
 sub_text = st.markdown("1) Submit your (fake) email on [jiriklimecky.tech](https://jiriklimecky.tech/)")
 sub_text = st.markdown("2) You can check data regarding your fake email via search bar below. Note that for GA4 data we need to wait till next export to BigQuery.")
-user_email = st.text_input("User email:")
+user_email = st.text_input("User email, or you may try test@test.com:")
 search = st.button("Search")
 
 # Once the user has submitted, upload it to the database
