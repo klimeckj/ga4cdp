@@ -6,3 +6,4 @@ Work is in progress. Current state:
 - Identity stiching : All historical GA4 client IDs available for given user email
 - User Interface built in Python with Streamlit https://ga4cdp.streamlit.app/ with codebase in https://github.com/klimeckj/ga4cdp
 - Tech stack: GA4, GTM, server-side GTM, Google Cloud Platform (BigQuery, Firestore, Dataform, Cloud Functions, Workflows, Pub/Sub, Storage Bucket), Streamlit
+
