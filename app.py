@@ -5,37 +5,165 @@ from google.cloud.firestore import Client
 from google.oauth2 import service_account
 import json
 from streamlit_mermaid import st_mermaid
+from datetime import timedelta
+
+# -----------------------
+# Konfigurace / přihlášení
+# -----------------------
+st.set_page_config(page_title="Composable CDP", page_icon="🧩", layout="wide")
 
 # Authenticate to Firestore with the JSON account key.
 key_dict = json.loads(st.secrets["textkey"])
 creds = service_account.Credentials.from_service_account_info(key_dict)
 db = firestore.Client(credentials=creds, project="gtm-5v5drk2p-mzg3y")
 
-# Streamlit widgets to let a user create a new post
+# -----------------------
+# Pomocné funkce (UI + transformace)
+# -----------------------
+NOT_SYNCED = "not synchronised yet"
+
+def humanize_ms(value):
+    """Převod milisekund na h:m:s. Vrací NOT_SYNCED pro None/nesmysly."""
+    try:
+        ms = int(value)
+        return str(timedelta(milliseconds=ms))
+    except Exception:
+        return NOT_SYNCED
+
+def to_int(value):
+    """Bezpečný převod na int, jinak NOT_SYNCED."""
+    try:
+        return int(value)
+    except Exception:
+        return NOT_SYNCED
+
+def normalize_record(doc_id, doc_dict):
+    """
+    Vrátí „znormalizovaný“ dict:
+    - Pole, která mohou chybět: engagement_time_millis, engaged_sessions, leads_count
+      → doplnit NOT_SYNCED
+    - Povinná pole dle zadání: email, client_id_collection, last_client_id
+    """
+    data = doc_dict or {}
+
+    # Povinné údaje — pokud by náhodou nebyly, zobrazíme NOT_SYNCED (ale dle zadání vždy jsou)
+    email = data.get("email") or doc_id or NOT_SYNCED
+    client_ids_raw = data.get("client_id_collection") or NOT_SYNCED
+    last_client_id = data.get("last_client_id") or NOT_SYNCED
+
+    # Volitelná pole
+    engagement_time = humanize_ms(data.get("engagement_time_millis"))
+    engaged_sessions = to_int(data.get("engaged_sessions"))
+    leads_count = to_int(data.get("leads_count"))
+
+    # Zpracování client_id_collection do listu (deduplikace, zachování pořadí)
+    client_id_list = []
+    if isinstance(client_ids_raw, str) and client_ids_raw != NOT_SYNCED:
+        seen = set()
+        for part in [p.strip() for p in client_ids_raw.split(",") if p.strip()]:
+            if part not in seen:
+                seen.add(part)
+                client_id_list.append(part)
+
+    return {
+        "email": email,
+        "client_id_collection_raw": client_ids_raw,
+        "client_id_list": client_id_list,
+        "last_client_id": last_client_id,
+        "engagement_time_hms": engagement_time,
+        "engaged_sessions": engaged_sessions,
+        "leads_count": leads_count,
+        "raw": data
+    }
+
+def badge(text):
+    return f"<span style='display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid rgba(0,0,0,0.1);background:#f6f8fa;font-size:12px;'>{text}</span>"
+
+def render_profile(n):
+    st.markdown("### 📇 Unified user profile")
+
+    # Horní řádek s metrikami
+    m1, m2, m3, m4 = st.columns([2,1,1,1])
+    with m1:
+        st.markdown("**Email**")
+        st.code(n["email"], language="text")
+        # Client ID summary
+        if n["client_id_list"]:
+            st.markdown(
+                badge(f"{len(n['client_id_list'])} client IDs") + " " +
+                badge(f"last: {n['last_client_id']}")
+                , unsafe_allow_html=True
+            )
+        else:
+            st.markdown(badge("client IDs: " + (NOT_SYNCED if n["client_id_collection_raw"] == NOT_SYNCED else "0")), unsafe_allow_html=True)
+
+    with m2:
+        st.metric("Engaged sessions", value=n["engaged_sessions"])
+    with m3:
+        st.metric("Leads count", value=n["leads_count"])
+    with m4:
+        st.metric("Engagement time (h:m:s)", value=n["engagement_time_hms"])
+
+    st.divider()
+
+    # Client IDs detail
+    st.markdown("#### Client IDs")
+    if n["client_id_list"]:
+        # Tabulka s označením last_client_id
+        tab_rows = []
+        for idx, cid in enumerate(n["client_id_list"], start=1):
+            is_last = "✅" if cid == n["last_client_id"] else ""
+            tab_rows.append({"#": idx, "client_id": cid, "is_last": is_last})
+        st.dataframe(tab_rows, use_container_width=True, hide_index=True)
+    else:
+        st.info("Client ID collection: **not synchronised yet**")
+
+    # Akce a raw JSON
+    c1, c2 = st.columns([1,1])
+    with c1:
+        if n["raw"]:
+            st.download_button(
+                label="⬇️ Download raw JSON",
+                data=json.dumps(n["raw"], indent=2),
+                file_name=f"user_{n['email']}.json",
+                mime="application/json"
+            )
+    with c2:
+        with st.expander("Raw JSON (API response)"):
+            if n["raw"]:
+                st.json(n["raw"])
+            else:
+                st.write(NOT_SYNCED)
+
+# -----------------------
+# UI – hlavička a vyhledávání
+# -----------------------
 header = st.title("Composable CDP")
-sub_text = st.text("This site is POC user interface of CDP. How to use it?")
-sub_text = st.markdown("1) Submit your (fake) email on [jiriklimecky.tech](https://jiriklimecky.tech/)")
-sub_text = st.markdown("2) You can check data regarding your fake email via search bar below. Note that for GA4 data we need to wait till next export to BigQuery.")
-user_email = st.text_input("User email, or you may try test@test.com:")
-search = st.button("Search")
+st.text("This site is POC user interface of CDP. How to use it?")
+st.markdown("1) Submit your (fake) email on [jiriklimecky.tech](https://jiriklimecky.tech/)")
+st.markdown("2) You can check data regarding your fake email via search bar below. Note that for GA4 data we need to wait till next export to BigQuery.")
 
-# Once the user has submitted, upload it to the database
+with st.container():
+    email_col, button_col = st.columns([3,1])
+    with email_col:
+        user_email = st.text_input("User email (try e.g. test@test.com):", key="email_input")
+    with button_col:
+        search = st.button("🔎 Search", use_container_width=True)
+
+# Vyhledání a zobrazení
 if user_email and search:
-    doc_ref = db.collection("hephaestus_test").document(user_email)
+    doc_ref = db.collection("hephaestus_test").document(user_email.strip())
     doc = doc_ref.get()
-    st.write("searched e-mail: ", doc.id)
-    st.write("known informations: ", doc.to_dict())
 
-# Create a reference to the Google post.
-# doc_ref = db.collection("hephaestus_test").document(user_email)
+    if not doc.exists:
+        st.warning("No record found for this email.")
+    else:
+        normalized = normalize_record(doc.id, doc.to_dict())
+        render_profile(normalized)
 
-# Then get the data at that reference.
-#doc = doc_ref.get()
-
-# Let's see what we got!
-#st.write("searched e-mail: ", doc.id)
-#st.write("known informations: ", doc.to_dict())
-
+# -----------------------
+# Diagramy (ponecháno)
+# -----------------------
 def display_sequence_diagram():
     sequence_chart = """
     sequenceDiagram
@@ -111,6 +239,7 @@ def display_component_diagram():
     st_mermaid(component_chart)
 
 def main():
+    st.markdown("---")
     st.title("Application Architecture")
     st.subheader("Component Diagram")
     display_component_diagram()
