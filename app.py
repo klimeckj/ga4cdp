@@ -37,12 +37,76 @@ def to_int(value):
     except Exception:
         return NOT_SYNCED
 
+def normalize_email_validity(value):
+    """
+    Vrátí 'valid' | 'invalid' | 'unknown' | NOT_SYNCED podle vstupu.
+    Akceptuje bool, i různé stringy (true/false/yes/no/ok/deliverable/bounced/unknown...).
+    """
+    if value is None:
+        return NOT_SYNCED
+
+    if isinstance(value, bool):
+        return "valid" if value else "invalid"
+
+    # Pokus o čitelnou klasifikaci stringů / čísel
+    try:
+        v = str(value).strip().lower()
+    except Exception:
+        return NOT_SYNCED
+
+    valid_set = {"valid", "true", "yes", "1", "ok", "deliverable", "clean", "good"}
+    invalid_set = {"invalid", "false", "no", "0", "undeliverable", "bounced", "bad"}
+    unknown_set = {"unknown", "unchecked", "n/a", "na", "null", "none"}
+
+    if v in valid_set:
+        return "valid"
+    if v in invalid_set:
+        return "invalid"
+    if v in unknown_set:
+        return "unknown"
+
+    # fallback – zobraz co přišlo (ale ať je to hezky malé)
+    return v or NOT_SYNCED
+
+def badge(text):
+    return f"<span style='display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid rgba(0,0,0,0.1);background:#f6f8fa;font-size:12px;'>{text}</span>"
+
+def validity_badge(validity_value):
+    """
+    Barevný chip pro email_validity.
+    """
+    v = validity_value
+    color = "#e5e7eb"  # default šedá
+    fg = "#111827"
+
+    if v == "valid":
+        color = "#dcfce7"  # zelená světlá
+        fg = "#065f46"
+        label = "Email validity: valid"
+    elif v == "invalid":
+        color = "#fee2e2"  # červená světlá
+        fg = "#7f1d1d"
+        label = "Email validity: invalid"
+    elif v == "unknown":
+        color = "#fef9c3"  # žlutá světlá
+        fg = "#713f12"
+        label = "Email validity: unknown"
+    elif v == NOT_SYNCED:
+        color = "#f3f4f6"  # šedá
+        fg = "#374151"
+        label = f"Email validity: {NOT_SYNCED}"
+    else:
+        # neznámá hodnota – zobrazíme text
+        label = f"Email validity: {v}"
+
+    return f"<span style='display:inline-block;padding:2px 10px;border-radius:999px;border:1px solid rgba(0,0,0,0.08);background:{color};color:{fg};font-size:12px;font-weight:600;'>{label}</span>"
+
 def normalize_record(doc_id, doc_dict):
     """
     Vrátí „znormalizovaný“ dict:
-    - Pole, která mohou chybět: engagement_time_millis, engaged_sessions, leads_count
-      → doplnit NOT_SYNCED
     - Povinná pole dle zadání: email, client_id_collection, last_client_id
+    - Volitelná: engagement_time_millis, engaged_sessions, leads_count, email_validity
+      → pokud chybí, doplníme NOT_SYNCED
     """
     data = doc_dict or {}
 
@@ -55,6 +119,7 @@ def normalize_record(doc_id, doc_dict):
     engagement_time = humanize_ms(data.get("engagement_time_millis"))
     engaged_sessions = to_int(data.get("engaged_sessions"))
     leads_count = to_int(data.get("leads_count"))
+    email_validity = normalize_email_validity(data.get("email_validity"))
 
     # Zpracování client_id_collection do listu (deduplikace, zachování pořadí)
     client_id_list = []
@@ -73,11 +138,9 @@ def normalize_record(doc_id, doc_dict):
         "engagement_time_hms": engagement_time,
         "engaged_sessions": engaged_sessions,
         "leads_count": leads_count,
+        "email_validity": email_validity,
         "raw": data
     }
-
-def badge(text):
-    return f"<span style='display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid rgba(0,0,0,0.1);background:#f6f8fa;font-size:12px;'>{text}</span>"
 
 def render_profile(n):
     st.markdown("### 📇 Unified user profile")
@@ -87,15 +150,18 @@ def render_profile(n):
     with m1:
         st.markdown("**Email**")
         st.code(n["email"], language="text")
-        # Client ID summary
+
+        chips = []
+        # Client IDs chipy
         if n["client_id_list"]:
-            st.markdown(
-                badge(f"{len(n['client_id_list'])} client IDs") + " " +
-                badge(f"last: {n['last_client_id']}")
-                , unsafe_allow_html=True
-            )
+            chips.append(badge(f"{len(n['client_id_list'])} client IDs"))
+            chips.append(badge(f"last: {n['last_client_id']}"))
         else:
-            st.markdown(badge("client IDs: " + (NOT_SYNCED if n["client_id_collection_raw"] == NOT_SYNCED else "0")), unsafe_allow_html=True)
+            chips.append(badge("client IDs: " + (NOT_SYNCED if n["client_id_collection_raw"] == NOT_SYNCED else "0")))
+        # Email validity chip
+        chips.append(validity_badge(n["email_validity"]))
+
+        st.markdown(" ".join(chips), unsafe_allow_html=True)
 
     with m2:
         st.metric("Engaged sessions", value=n["engaged_sessions"])
@@ -109,7 +175,6 @@ def render_profile(n):
     # Client IDs detail
     st.markdown("#### Client IDs")
     if n["client_id_list"]:
-        # Tabulka s označením last_client_id
         tab_rows = []
         for idx, cid in enumerate(n["client_id_list"], start=1):
             is_last = "✅" if cid == n["last_client_id"] else ""
@@ -140,7 +205,7 @@ def render_profile(n):
 # -----------------------
 header = st.title("Composable CDP")
 st.text("This site is POC user interface of CDP. How to use it?")
-st.markdown("1) Submit your (fake) email on [jiriklimecky.tech](https://jiriklimecky.tech/)")
+st.markdown("1) Submit your (fake) email on [jiriklimecky.euweb.cz](https://jiriklimecky.euweb.cz/)")
 st.markdown("2) You can check data regarding your fake email via search bar below. Note that for GA4 data we need to wait till next export to BigQuery.")
 
 with st.container():
