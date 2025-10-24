@@ -44,6 +44,49 @@ jobs:
               f.write(base64.b64decode(b64))
           print("Decoded ai.patch")
           PY
+          # Normalize file line endings on the mbox container lines ONLY.
+          # This converts CRLF to LF without touching binary content;
+          # good enough for typical mbox/diff text.
+          awk 'BEGIN{RS="\r?\n"; ORS="\n"} {print}' ai.patch > ai.patch.lf && mv ai.patch.lf ai.patch
+
+      - name: Show patch info (size, header, diff markers)
+        run: |
+          set -e
+          echo "== file info =="
+          ls -l ai.patch || true
+          echo "== first 40 lines =="
+          sed -n '1,40p' ai.patch || true
+          echo "== diff markers =="
+          grep -nE '^diff --git ' ai.patch || true
+          echo "== subject line(s) =="
+          grep -nE '^Subject: ' ai.patch || true
+
+      - name: Upload decoded patch (pre-apply)
+        uses: actions/upload-artifact@v4
+        with:
+          name: decoded-ai-patch
+          path: ai.patch
+          if-no-files-found: error
+
+      - name: Create working branch
+        id: prep
+        run: |
+          set -e
+          BRANCH="ai/patch-${{ github.run_id }}"
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+          git switch -c "$BRANCH"
+
+      - name: Apply patch with three-way merge (file mode)
+        id: apply
+        run: |
+          set -e
+          # Pass the patch file directly rather than via stdin; tolerate offsets with -3 and keep CRs inside hunks.
+          if ! git am -3 --keep-cr ai.patch ; then
+            echo "git am failed; capturing rejects/artifacts"
+            echo "am_failed=true" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
 
       # === NEW: DIAGNOSTICS BEFORE APPLY ===
       - name: Show patch info (size, header, diff markers)
