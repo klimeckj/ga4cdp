@@ -51,14 +51,12 @@ jobs:
         run: |
           set -e
           python - << 'PY'
-          import io
           p = 'ai.patch'
           with open(p,'rb') as f:
-              data = f.read()
-          # Normalize CRLF to LF across the container text (safe for typical mbox/diff)
+            data = f.read()
           data = data.replace(b'\r\n', b'\n')
           with open(p,'wb') as f:
-              f.write(data)
+            f.write(data)
           PY
 
       - name: Show patch info (size, header, diff markers)
@@ -92,7 +90,6 @@ jobs:
         id: apply
         run: |
           set -e
-          # Use file input (not stdin) and three-way merge; keep CR in hunks/commit message if present.
           if ! git am -3 --keep-cr ai.patch ; then
             echo "git am failed; capturing rejects/artifacts"
             echo "am_failed=true" >> $GITHUB_OUTPUT
@@ -135,7 +132,7 @@ jobs:
               `Base ref used for checkout: \`${{ github.event.inputs.base_ref || 'main' }}\``,
               `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
             ].join('\n');
-            const { data: pr } = await github.pulls.create({
+            const { data: pr } = await github.rest.pulls.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
               title,
