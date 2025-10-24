@@ -31,19 +31,39 @@ jobs:
           git config --global core.eol lf
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git status --porcelain=v1
 
       - name: Decode mbox patch
         env:
           PATCH_B64: ${{ github.event.inputs.patch_mbox_b64 }}
         run: |
           python - << 'PY'
-          import base64, os
+          import base64, os, sys
           b64 = os.environ['PATCH_B64']
           with open('ai.patch','wb') as f:
               f.write(base64.b64decode(b64))
           print("Decoded ai.patch")
           PY
-          ls -l ai.patch
+
+      # === NEW: DIAGNOSTICS BEFORE APPLY ===
+      - name: Show patch info (size, header, diff markers)
+        run: |
+          set -e
+          echo "== file info =="
+          ls -l ai.patch || true
+          echo "== first 40 lines =="
+          head -n 40 ai.patch || true
+          echo "== diff markers =="
+          grep -nE '^diff --git ' ai.patch || true
+          echo "== subject line(s) =="
+          grep -nE '^Subject: ' ai.patch || true
+
+      - name: Upload decoded patch (pre-apply)
+        uses: actions/upload-artifact@v4
+        with:
+          name: decoded-ai-patch
+          path: ai.patch
+          if-no-files-found: error
 
       - name: Create working branch
         id: prep
@@ -57,8 +77,6 @@ jobs:
         id: apply
         run: |
           set -e
-          # --keep-cr preserves CR in commit messages and patch payloads if present
-          # -3 enables three-way merge to tolerate offsets/context drift
           if ! git am -3 --keep-cr < ai.patch ; then
             echo "git am failed; capturing rejects/artifacts"
             echo "am_failed=true" >> $GITHUB_OUTPUT
@@ -93,7 +111,7 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const base = 'main'; // target base is always main per requirements
+            const base = 'main';
             const head = '${{ steps.prep.outputs.branch }}';
             const title = `AI patch PR from run ${context.runId}`;
             const body = [
