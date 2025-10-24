@@ -34,20 +34,32 @@ jobs:
           git status --porcelain=v1
 
       - name: Decode mbox patch
+        id: decode
         env:
           PATCH_B64: ${{ github.event.inputs.patch_mbox_b64 }}
         run: |
+          set -e
           python - << 'PY'
-          import base64, os, sys
+          import base64, os
           b64 = os.environ['PATCH_B64']
           with open('ai.patch','wb') as f:
               f.write(base64.b64decode(b64))
           print("Decoded ai.patch")
           PY
-          # Normalize file line endings on the mbox container lines ONLY.
-          # This converts CRLF to LF without touching binary content;
-          # good enough for typical mbox/diff text.
-          awk 'BEGIN{RS="\r?\n"; ORS="\n"} {print}' ai.patch > ai.patch.lf && mv ai.patch.lf ai.patch
+
+      - name: Normalize mbox newlines (CRLF → LF) without changing bytes otherwise
+        run: |
+          set -e
+          python - << 'PY'
+          import io
+          p = 'ai.patch'
+          with open(p,'rb') as f:
+              data = f.read()
+          # Normalize CRLF to LF across the container text (safe for typical mbox/diff)
+          data = data.replace(b'\r\n', b'\n')
+          with open(p,'wb') as f:
+              f.write(data)
+          PY
 
       - name: Show patch info (size, header, diff markers)
         run: |
@@ -80,47 +92,8 @@ jobs:
         id: apply
         run: |
           set -e
-          # Pass the patch file directly rather than via stdin; tolerate offsets with -3 and keep CRs inside hunks.
+          # Use file input (not stdin) and three-way merge; keep CR in hunks/commit message if present.
           if ! git am -3 --keep-cr ai.patch ; then
-            echo "git am failed; capturing rejects/artifacts"
-            echo "am_failed=true" >> $GITHUB_OUTPUT
-            exit 1
-          fi
-
-
-      # === NEW: DIAGNOSTICS BEFORE APPLY ===
-      - name: Show patch info (size, header, diff markers)
-        run: |
-          set -e
-          echo "== file info =="
-          ls -l ai.patch || true
-          echo "== first 40 lines =="
-          head -n 40 ai.patch || true
-          echo "== diff markers =="
-          grep -nE '^diff --git ' ai.patch || true
-          echo "== subject line(s) =="
-          grep -nE '^Subject: ' ai.patch || true
-
-      - name: Upload decoded patch (pre-apply)
-        uses: actions/upload-artifact@v4
-        with:
-          name: decoded-ai-patch
-          path: ai.patch
-          if-no-files-found: error
-
-      - name: Create working branch
-        id: prep
-        run: |
-          set -e
-          BRANCH="ai/patch-${{ github.run_id }}"
-          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
-          git switch -c "$BRANCH"
-
-      - name: Apply patch with three-way merge
-        id: apply
-        run: |
-          set -e
-          if ! git am -3 --keep-cr < ai.patch ; then
             echo "git am failed; capturing rejects/artifacts"
             echo "am_failed=true" >> $GITHUB_OUTPUT
             exit 1
