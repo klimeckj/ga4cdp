@@ -1,4 +1,4 @@
-# Composable CDP built with Google Cloud and Streamlit
+# PoC Composable CDP built with Google Cloud and Streamlit
 
 Composable customer data platform that combines GA4 telemetry, Firestore, and Streamlit to drive real-time personalisation. The stack ingests consented behavioural data, stitches identities, and exposes an operations console for marketers and data teams.
 
