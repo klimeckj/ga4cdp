@@ -6,6 +6,8 @@ from google.oauth2 import service_account
 import json
 from streamlit_mermaid import st_mermaid
 from datetime import timedelta
+import smtplib
+from email.mime.text import MIMEText
 
 # -----------------------
 # Konfigurace / přihlášení
@@ -21,6 +23,8 @@ db = firestore.Client(credentials=creds, project="gtm-5v5drk2p-mzg3y")
 # Pomocné funkce (UI + transformace)
 # -----------------------
 NOT_SYNCED = "not synchronised yet"
+SEGMENT_BATCH_LIMIT = 25
+VALIDITY_OPTIONS = ["valid", "invalid", "unknown"]
 
 def humanize_ms(value):
     """Převod milisekund na h:m:s. Vrací NOT_SYNCED pro None/nesmysly."""
@@ -200,6 +204,118 @@ def render_profile(n):
             else:
                 st.write(NOT_SYNCED)
 
+def query_segment(validity_filter, min_sessions, min_leads, limit=SEGMENT_BATCH_LIMIT):
+    """
+    Stream users from Firestore, normalise them, and return a capped list for the UI.
+    """
+    statuses = [v for v in validity_filter if v in VALIDITY_OPTIONS]
+    rows = []
+
+    try:
+        docs = db.collection("hephaestus_test").stream()
+    except Exception as exc:
+        st.error(f"Unable to query Firestore: {exc}")
+        return rows
+
+    for doc in docs:
+        normalized = normalize_record(doc.id, doc.to_dict())
+        validity = normalized["email_validity"]
+
+        if statuses and validity not in statuses:
+            continue
+
+        engaged_value = normalized["engaged_sessions"] if isinstance(normalized["engaged_sessions"], int) else 0
+        leads_value = normalized["leads_count"] if isinstance(normalized["leads_count"], int) else 0
+
+        if engaged_value < min_sessions:
+            continue
+        if leads_value < min_leads:
+            continue
+
+        rows.append({
+            "email": normalized["email"],
+            "email_validity": validity,
+            "engaged_sessions": normalized["engaged_sessions"],
+            "leads_count": normalized["leads_count"],
+            "engagement_time_hms": normalized["engagement_time_hms"],
+        })
+
+        if len(rows) >= limit:
+            break
+
+    return rows
+
+def _mail_settings():
+    """
+    Safely pull SMTP configuration from st.secrets['mail'] if available.
+    """
+    try:
+        secrets_section = st.secrets.get("mail", {})
+    except Exception:
+        try:
+            secrets_section = st.secrets["mail"]
+        except Exception:
+            secrets_section = {}
+    try:
+        return dict(secrets_section)
+    except Exception:
+        return secrets_section or {}
+
+def send_email_batch(recipients, subject, body):
+    """
+    Send emails sequentially via SMTP. Returns (success_emails, error_dicts).
+    """
+    if not recipients:
+        return [], [{"email": None, "error": "No recipients supplied."}]
+
+    mail_conf = _mail_settings()
+    required = ["smtp_host", "smtp_port", "username", "password", "from_email"]
+    missing = [key for key in required if not mail_conf.get(key)]
+    if missing:
+        raise ValueError(
+            "Mail secrets incomplete. Please add "
+            + ", ".join(missing)
+            + " under st.secrets['mail']."
+        )
+
+    host = mail_conf["smtp_host"]
+    port = int(mail_conf.get("smtp_port", 587))
+    sender = mail_conf.get("from_email") or mail_conf.get("username")
+    sender_name = mail_conf.get("from_name")
+    formatted_sender = f"{sender_name} <{sender}>" if sender_name else sender
+    use_tls = mail_conf.get("starttls", True)
+    timeout = int(mail_conf.get("smtp_timeout", 20))
+
+    successes = []
+    errors = []
+
+    try:
+        with smtplib.SMTP(host, port, timeout=timeout) as smtp:
+            if use_tls:
+                smtp.starttls()
+            username = mail_conf.get("username")
+            password = mail_conf.get("password")
+            if username and password:
+                smtp.login(username, password)
+
+            for recipient in recipients:
+                msg = MIMEText(body, "plain", "utf-8")
+                msg["Subject"] = subject
+                msg["From"] = formatted_sender
+                msg["To"] = recipient
+
+                try:
+                    smtp.sendmail(sender, [recipient], msg.as_string())
+                    successes.append(recipient)
+                    print(f"[email-poc] sent to {recipient}")
+                except Exception as exc:
+                    errors.append({"email": recipient, "error": str(exc)})
+                    print(f"[email-poc] failed for {recipient}: {exc}")
+    except Exception as exc:
+        raise ValueError(f"Unable to reach SMTP server: {exc}") from exc
+
+    return successes, errors
+
 # -----------------------
 # UI – hlavička a vyhledávání
 # -----------------------
@@ -225,6 +341,130 @@ if user_email and search:
     else:
         normalized = normalize_record(doc.id, doc.to_dict())
         render_profile(normalized)
+
+# -----------------------
+# Segmentace a rozesílka emailů (PoC)
+# -----------------------
+st.divider()
+st.subheader("✉️ Email subgroup PoC")
+
+if "segment_preview" not in st.session_state:
+    st.session_state["segment_preview"] = []
+if "segment_meta" not in st.session_state:
+    st.session_state["segment_meta"] = {
+        "validity": ["valid"],
+        "min_sessions": 0,
+        "min_leads": 0,
+        "test_email": ""
+    }
+if "segment_subject" not in st.session_state:
+    st.session_state["segment_subject"] = "Composable CDP PoC outreach"
+if "segment_body" not in st.session_state:
+    st.session_state["segment_body"] = (
+        "Hi there,\n\nThanks for trying the Composable CDP PoC. "
+        "Let us know what you think!\n\n– The CDP team"
+    )
+
+previous_meta = st.session_state["segment_meta"]
+default_validity = previous_meta.get("validity") or ["valid"]
+default_sessions = int(previous_meta.get("min_sessions", 0))
+default_leads = int(previous_meta.get("min_leads", 0))
+default_test_email = previous_meta.get("test_email", "")
+
+with st.form("segment_filter_form"):
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        validity_choices = st.multiselect(
+            "Email validity filter",
+            VALIDITY_OPTIONS,
+            default=[v for v in default_validity if v in VALIDITY_OPTIONS] or VALIDITY_OPTIONS,
+            help="Only contacts matching these statuses will be included."
+        )
+    with col2:
+        test_email = st.text_input(
+            "Optional test email override",
+            value=default_test_email,
+            help="Provide an address to route the send to a single inbox first."
+        )
+    min_sessions = st.number_input(
+        "Minimum engaged sessions",
+        min_value=0,
+        value=default_sessions,
+        step=1
+    )
+    min_leads = st.number_input(
+        "Minimum leads count",
+        min_value=0,
+        value=default_leads,
+        step=1
+    )
+    preview_request = st.form_submit_button("Preview subgroup", use_container_width=True)
+
+if preview_request:
+    segment_rows = query_segment(validity_choices, int(min_sessions), int(min_leads))
+    st.session_state["segment_preview"] = segment_rows
+    st.session_state["segment_meta"] = {
+        "validity": validity_choices,
+        "min_sessions": int(min_sessions),
+        "min_leads": int(min_leads),
+        "test_email": test_email.strip()
+    }
+    if not segment_rows:
+        st.info("No contacts met the current filters. Try relaxing the thresholds.")
+
+segment_rows = st.session_state.get("segment_preview", [])
+segment_meta = st.session_state.get("segment_meta", {})
+test_email_override = segment_meta.get("test_email", "").strip()
+
+if segment_rows:
+    count_badge = badge(f"{len(segment_rows)} recipients (max {SEGMENT_BATCH_LIMIT})")
+    st.markdown(f"**Previewed subgroup** {count_badge}", unsafe_allow_html=True)
+    st.dataframe(segment_rows, use_container_width=True, hide_index=True)
+    if len(segment_rows) == SEGMENT_BATCH_LIMIT:
+        st.caption(f"Showing the first {SEGMENT_BATCH_LIMIT} contacts to keep the UI responsive.")
+    if test_email_override:
+        st.warning(f"Test mode is ON – send action will target only `{test_email_override}`.")
+else:
+    st.info("Use the form above to preview a subgroup of contacts for outreach.")
+
+if segment_rows:
+    recipients = [row["email"] for row in segment_rows if row.get("email")]
+    effective_recipients = [test_email_override] if test_email_override else recipients
+
+    st.markdown("#### Send PoC email")
+    subject = st.text_input("Email subject", key="segment_subject")
+    body = st.text_area("Email body", key="segment_body", height=180)
+    confirm_send = st.checkbox(
+        "I confirm these recipients should receive this message.",
+        key="segment_confirm"
+    )
+    success_placeholder = st.empty()
+    error_placeholder = st.empty()
+    send_clicked = st.button(
+        "Send to subgroup",
+        disabled=not confirm_send or not effective_recipients,
+        type="primary",
+        key="segment_send_button"
+    )
+
+    if send_clicked and confirm_send:
+        try:
+            successes, errors = send_email_batch(
+                effective_recipients[:SEGMENT_BATCH_LIMIT],
+                subject,
+                body
+            )
+            if successes:
+                success_placeholder.success(f"Successfully sent {len(successes)} email(s).")
+            if errors:
+                error_placeholder.error(f"{len(errors)} email(s) failed. See details below.")
+                with st.expander("Delivery errors", expanded=False):
+                    for err in errors:
+                        st.write(f"{err.get('email', 'n/a')}: {err.get('error')}")
+        except ValueError as exc:
+            error_placeholder.error(str(exc))
+else:
+    st.caption("Preview a subgroup to unlock the send flow.")
 
 # -----------------------
 # Diagramy (ponecháno)
