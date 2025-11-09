@@ -6,6 +6,7 @@ from google.oauth2 import service_account
 import json
 from streamlit_mermaid import st_mermaid
 from datetime import timedelta
+import requests
 
 # -----------------------
 # Konfigurace / přihlášení
@@ -21,6 +22,7 @@ db = firestore.Client(credentials=creds, project="gtm-5v5drk2p-mzg3y")
 # Pomocné funkce (UI + transformace)
 # -----------------------
 NOT_SYNCED = "not synchronised yet"
+WEBHOOK_URL = "https://webhook.site/737bde63-d058-468f-ab4c-20fd3c37fd80"
 
 def humanize_ms(value):
     """Převod milisekund na h:m:s. Vrací NOT_SYNCED pro None/nesmysly."""
@@ -142,6 +144,27 @@ def normalize_record(doc_id, doc_dict):
         "raw": data
     }
 
+def send_recap_to_webhook(record):
+    """
+    Post a simple recap payload to webhook.site to simulate personalised comms.
+    """
+    payload = {
+        "template": "Hi {email}, here is your latest engagement recap.".format(email=record["email"]),
+        "email": record["email"],
+        "engaged_sessions": record["engaged_sessions"],
+        "leads_count": record["leads_count"],
+        "last_client_id": record["last_client_id"],
+        "email_validity": record["email_validity"],
+        "snapshot": record.get("raw", {}),
+    }
+
+    try:
+        response = requests.post(WEBHOOK_URL, json=payload, timeout=10)
+        response.raise_for_status()
+        return True, response.text[:200] or "Webhook accepted payload."
+    except requests.RequestException as exc:
+        return False, str(exc)
+
 def render_profile(n):
     st.markdown("### 📇 Unified user profile")
 
@@ -184,7 +207,7 @@ def render_profile(n):
         st.info("Client ID collection: **not synchronised yet**")
 
     # Akce a raw JSON
-    c1, c2 = st.columns([1,1])
+    c1, c2, c3 = st.columns([1,1,1])
     with c1:
         if n["raw"]:
             st.download_button(
@@ -199,6 +222,18 @@ def render_profile(n):
                 st.json(n["raw"])
             else:
                 st.write(NOT_SYNCED)
+    with c3:
+        st.markdown("**Send recap**")
+        recap_key = f"send_recap_{n['email']}"
+        if st.button("Send recap to webhook", key=recap_key, use_container_width=True):
+            with st.spinner("Dispatching recap..."):
+                ok, info = send_recap_to_webhook(n)
+            if ok:
+                st.success("Webhook received the recap payload.")
+                st.caption(info)
+            else:
+                st.error("Failed to dispatch recap.")
+                st.caption(info)
 
 # -----------------------
 # UI – hlavička a vyhledávání
