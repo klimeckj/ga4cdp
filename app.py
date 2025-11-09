@@ -22,7 +22,7 @@ db = firestore.Client(credentials=creds, project="gtm-5v5drk2p-mzg3y")
 # Pomocné funkce (UI + transformace)
 # -----------------------
 NOT_SYNCED = "not synchronised yet"
-WEBHOOK_URL = "https://webhook.site/737bde63-d058-468f-ab4c-20fd3c37fd80"
+DEFAULT_WEBHOOK_URL = "https://webhook.site/737bde63-d058-468f-ab4c-20fd3c37fd80"
 
 def humanize_ms(value):
     """Převod milisekund na h:m:s. Vrací NOT_SYNCED pro None/nesmysly."""
@@ -144,7 +144,7 @@ def normalize_record(doc_id, doc_dict):
         "raw": data
     }
 
-def send_recap_to_webhook(record):
+def send_recap_to_webhook(record, webhook_url):
     """
     Post a simple recap payload to webhook.site to simulate personalised comms.
     """
@@ -158,14 +158,17 @@ def send_recap_to_webhook(record):
         "snapshot": record.get("raw", {}),
     }
 
+    if not webhook_url:
+        return False, "Webhook URL is empty. Please provide a valid endpoint."
+
     try:
-        response = requests.post(WEBHOOK_URL, json=payload, timeout=10)
+        response = requests.post(webhook_url, json=payload, timeout=10)
         response.raise_for_status()
         return True, response.text[:200] or "Webhook accepted payload."
     except requests.RequestException as exc:
         return False, str(exc)
 
-def render_profile(n):
+def render_profile(n, webhook_url):
     st.markdown("### 📇 Unified user profile")
 
     # Horní řádek s metrikami
@@ -225,9 +228,12 @@ def render_profile(n):
     with c3:
         st.markdown("**Send recap**")
         recap_key = f"send_recap_{n['email']}"
-        if st.button("Send recap to webhook", key=recap_key, use_container_width=True):
+        disabled = not webhook_url
+        if disabled:
+            st.caption("Provide a webhook.site URL above to enable recap sends.")
+        if st.button("Send recap to webhook", key=recap_key, use_container_width=True, disabled=disabled):
             with st.spinner("Dispatching recap..."):
-                ok, info = send_recap_to_webhook(n)
+                ok, info = send_recap_to_webhook(n, webhook_url)
             if ok:
                 st.success("Webhook received the recap payload.")
                 st.caption(info)
@@ -242,6 +248,15 @@ header = st.title("Composable CDP")
 st.text("This site is POC user interface of CDP. How to use it?")
 st.markdown("1) Submit your (fake) email on [jiriklimecky.euweb.cz](https://jiriklimecky.euweb.cz/)")
 st.markdown("2) You can check data regarding your fake email via search bar below. Note that for GA4 data we need to wait till next export to BigQuery.")
+
+if "webhook_url" not in st.session_state:
+    st.session_state["webhook_url"] = DEFAULT_WEBHOOK_URL
+
+st.session_state["webhook_url"] = st.text_input(
+    "Webhook.site URL used for recap dispatches",
+    value=st.session_state["webhook_url"],
+    help="Paste the full https://webhook.site/... endpoint to preview outbound payloads."
+).strip()
 
 if "last_profile" not in st.session_state:
     st.session_state["last_profile"] = None
@@ -266,8 +281,9 @@ if user_email and search:
         st.session_state["last_profile"] = normalized
 
 current_profile = st.session_state.get("last_profile")
+current_webhook_url = st.session_state.get("webhook_url", "").strip()
 if current_profile:
-    render_profile(current_profile)
+    render_profile(current_profile, current_webhook_url)
 
 # -----------------------
 # Diagramy (ponecháno)
