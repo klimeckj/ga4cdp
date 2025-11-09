@@ -243,6 +243,9 @@ st.text("This site is POC user interface of CDP. How to use it?")
 st.markdown("1) Submit your (fake) email on [jiriklimecky.euweb.cz](https://jiriklimecky.euweb.cz/)")
 st.markdown("2) You can check data regarding your fake email via search bar below. Note that for GA4 data we need to wait till next export to BigQuery.")
 
+if "last_profile" not in st.session_state:
+    st.session_state["last_profile"] = None
+
 with st.container():
     email_col, button_col = st.columns([3,1])
     with email_col:
@@ -257,9 +260,14 @@ if user_email and search:
 
     if not doc.exists:
         st.warning("No record found for this email.")
+        st.session_state["last_profile"] = None
     else:
         normalized = normalize_record(doc.id, doc.to_dict())
-        render_profile(normalized)
+        st.session_state["last_profile"] = normalized
+
+current_profile = st.session_state.get("last_profile")
+if current_profile:
+    render_profile(current_profile)
 
 # -----------------------
 # Diagramy (ponecháno)
