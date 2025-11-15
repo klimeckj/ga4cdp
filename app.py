@@ -163,10 +163,25 @@ def send_recap_to_webhook(record, webhook_url):
 
     try:
         response = requests.post(webhook_url, json=payload, timeout=10)
-        response.raise_for_status()
-        return True, response.text[:200] or "Webhook accepted payload."
     except requests.RequestException as exc:
         return False, str(exc)
+
+    # n8n test webhooks respond with 404 but still include "Workflow was started"
+    if response.status_code == 404:
+        try:
+            message = response.json().get("message", "")
+        except ValueError:
+            message = response.text or ""
+        if "workflow was started" in message.lower():
+            return True, message or "n8n test webhook accepted payload."
+
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        snippet = response.text[:200]
+        return False, f"{exc}. Response: {snippet}" if snippet else str(exc)
+
+    return True, response.text[:200] or "Webhook accepted payload."
 
 def render_profile(n, webhook_url):
     st.markdown("### 📇 Unified user profile")
